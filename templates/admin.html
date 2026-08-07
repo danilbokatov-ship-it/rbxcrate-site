@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+{% block title %}Админ-панель{% endblock %}
+{% block content %}
+<h3 class="mb-4">Админ-панель</h3>
+
+<div class="row mb-4">
+    {% for label, value in [
+        ('Всего товаров', stats.total_products),
+        ('Доступно Pass', stats.available_products),
+        ('Использовано', stats.used_products),
+        ('Пользователей', stats.total_users),
+        ('Одобрено', stats.approved_users),
+        ('Ожидают', stats.pending_users),
+        ('Заказов', stats.total_orders),
+        ('Выводов', stats.pending_withdrawals),
+        ('В хранилище', stats.storage_count)
+    ] %}
+    <div class="col-md-3 mb-3">
+        <div class="stat-card">
+            <div class="stat-number">{{ value }}</div>
+            <div class="text-muted small">{{ label }}</div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="row">
+    <div class="col-md-6 mb-4">
+        <div class="card p-4">
+            <h5>Загрузка товаров</h5>
+            <p class="text-muted small">1 строка = 1 товар. Формат: <code>ник:пароль</code></p>
+            <form method="POST" action="{{ url_for('admin_upload') }}">
+                <textarea name="products" class="form-control mb-3" rows="8" placeholder="PlayerOne:pass123&#10;PlayerTwo:qwerty&#10;..."></textarea>
+                <button type="submit" class="btn btn-primary w-100">Загрузить</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-md-6 mb-4">
+        <div class="card p-4">
+            <h5>Пользователи</h5>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                <table class="table table-sm">
+                    <thead><tr><th>Логин</th><th>Баланс</th><th>Статус</th><th>Действие</th></tr></thead>
+                    <tbody>
+                        {% for u in users %}
+                        <tr>
+                            <td>{{ u.username }}</td>
+                            <td>{{ u.balance }} руб.</td>
+                            <td>
+                                {% if u.is_approved %}
+                                    <span class="badge bg-success">Одобрен</span>
+                                {% else %}
+                                    <span class="badge bg-warning text-dark">Ожидает</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if not u.is_approved %}
+                                <form method="POST" action="{{ url_for('admin_approve', user_id=u.id) }}" style="display:inline;">
+                                    <button class="btn btn-sm btn-success">OK</button>
+                                </form>
+                                {% endif %}
+                                <form method="POST" action="{{ url_for('admin_reject', user_id=u.id) }}" style="display:inline;">
+                                    <button class="btn btn-sm btn-secondary">X</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card p-4 mb-4">
+    <h5>Последние товары</h5>
+    <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+        <table class="table table-sm">
+            <thead><tr><th>ID</th><th>Ник</th><th>Статус</th><th>Действие</th></tr></thead>
+            <tbody>
+                {% for p in products %}
+                <tr>
+                    <td>{{ p.id }}</td>
+                    <td><code>{{ p.roblox_username }}</code></td>
+                    <td>
+                        {% if p.skin_done %}
+                            <span class="badge bg-primary">В хранилище</span>
+                        {% elif p.is_used %}
+                            <span class="badge bg-secondary">Использован</span>
+                        {% else %}
+                            <span class="badge bg-success">Свободен</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form method="POST" action="{{ url_for('admin_delete_product', product_id=p.id) }}" style="display:inline;">
+                            <button class="btn btn-sm btn-danger" onclick="return confirm('Удалить?')">Del</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card p-4 mb-4">
+    <h5>Последние заказы</h5>
+    <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+        <table class="table table-sm">
+            <thead>
+                <tr><th>ID</th><th>Пользователь</th><th>Ник</th><th>Place ID</th><th>Статус</th><th>Действие</th></tr>
+            </thead>
+            <tbody>
+                {% for o in orders %}
+                <tr>
+                    <td>#{{ o.id }}</td>
+                    <td>{{ o.user_id }}</td>
+                    <td>{{ o.roblox_username }}</td>
+                    <td><code>{{ o.place_id }}</code></td>
+                    <td>
+                        {% if o.status == 'completed' %}
+                            <span class="badge bg-success">Выполнен</span>
+                        {% elif o.status == 'failed' %}
+                            <span class="badge bg-danger">Ошибка</span>
+                        {% else %}
+                            <span class="badge bg-warning text-dark">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form method="POST" action="{{ url_for('admin_check_order', order_id=o.id) }}" style="display:inline;">
+                            <button class="btn btn-sm btn-info">Проверить</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card p-4 mb-4">
+    <h5>Заявки на вывод</h5>
+    <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+        <table class="table table-sm">
+            <thead>
+                <tr><th>ID</th><th>Пользователь</th><th>Сумма</th><th>Телефон</th><th>Статус</th><th>Действие</th></tr>
+            </thead>
+            <tbody>
+                {% for w in withdrawals %}
+                <tr>
+                    <td>#{{ w.id }}</td>
+                    <td>{{ w.user_id }}</td>
+                    <td>{{ w.amount }} руб.</td>
+                    <td>{{ w.phone }}</td>
+                    <td>
+                        {% if w.status == 'completed' %}
+                            <span class="badge bg-success">Выполнен</span>
+                        {% elif w.status == 'rejected' %}
+                            <span class="badge bg-danger">Отклонён</span>
+                        {% else %}
+                            <span class="badge bg-warning text-dark">Ожидает</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if w.status == 'pending' %}
+                        <form method="POST" action="{{ url_for('admin_confirm_withdrawal', withdrawal_id=w.id) }}" style="display:inline;">
+                            <button class="btn btn-sm btn-success" onclick="return confirm('Подтвердить вывод {{ w.amount }} руб.?')">OK</button>
+                        </form>
+                        <form method="POST" action="{{ url_for('admin_reject_withdrawal', withdrawal_id=w.id) }}" style="display:inline;">
+                            <button class="btn btn-sm btn-danger">X</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="card p-4">
+    <h5>Хранилище готовых аккаунтов</h5>
+    <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+        <table class="table table-sm">
+            <thead>
+                <tr><th>ID</th><th>Ник</th><th>Пароль</th><th>Place ID</th><th>Готов</th></tr>
+            </thead>
+            <tbody>
+                {% for s in storage %}
+                <tr>
+                    <td>{{ s.id }}</td>
+                    <td><code>{{ s.roblox_username }}</code></td>
+                    <td><code>{{ s.roblox_password }}</code></td>
+                    <td><code>{{ s.place_id or '-' }}</code></td>
+                    <td>{{ s.skin_done_at.strftime('%d.%m.%Y %H:%M') if s.skin_done_at else '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
