@@ -45,6 +45,7 @@ SKIN_LINKS = [
 
 PASS_REWARD = 30
 SKIN_REWARD = 10
+RESERVE_TIMEOUT = timedelta(minutes=30)
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -69,10 +70,14 @@ class Product(db.Model):
     is_used = db.Column(db.Boolean, default=False)
     used_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     used_at = db.Column(db.DateTime, nullable=True)
+    reserved_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    reserved_at = db.Column(db.DateTime, nullable=True)
     rbxcrate_completed_at = db.Column(db.DateTime, nullable=True)
     skin_done = db.Column(db.Boolean, default=False)
     skin_done_at = db.Column(db.DateTime, nullable=True)
     skin_done_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    skin_reserved_by_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    skin_reserved_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -298,13 +303,27 @@ def dashboard():
         flash('Ваш аккаунт ожидает одобрения.', 'warning')
         return redirect(url_for('login'))
 
-    available_pass = Product.query.filter_by(is_used=False).count()
+    timeout = datetime.utcnow() - RESERVE_TIMEOUT
+
+    available_pass = Product.query.filter(
+        Product.is_used == False,
+        db.or_(
+            Product.reserved_by_user_id == None,
+            Product.reserved_at < timeout
+        )
+    ).count()
+
     available_skin = Product.query.filter(
         Product.is_used == True,
         Product.skin_done == False,
         Product.rbxcrate_completed_at != None,
-        Product.rbxcrate_completed_at <= datetime.utcnow() - timedelta(days=5)
+        Product.rbxcrate_completed_at <= datetime.utcnow() - timedelta(days=5),
+        db.or_(
+            Product.skin_reserved_by_user_id == None,
+            Product.skin_reserved_at < timeout
+        )
     ).count()
+
     my_orders = Order.query.filter_by(user_id=current_user.id).order_by(Order.created_at.desc()).all()
     my_withdrawals = Withdrawal.query.filter_by(user_id=current_user.id).order_by(Withdrawal.created_at.desc()).all()
     return render_template('dashboard.html', available_pass=available_pass, available_skin=available_skin,
@@ -328,8 +347,8 @@ def create_pass():
     if request.method == 'POST':
         product_id = request.form.get('product_id', type=int)
         product = Product.query.get(product_id)
-        if not product or product.is_used or product.used_by_user_id != current_user.id:
-            flash('Ошибка: товар не найден или уже использован.', 'danger')
+        if not product or product.is_used or product.reserved_by_user_id != current_user.id:
+            flash('Ошибка: товар не найден, уже использован или зарезервирован другим пользователем.', 'danger')
             return redirect(url_for('dashboard'))
 
         username = product.roblox_username
@@ -364,6 +383,7 @@ def create_pass():
             )
             product.is_used = True
             product.used_at = datetime.utcnow()
+            product.used_by_user_id = current_user.id
 
             db.session.add(order)
             db.session.commit()
@@ -382,12 +402,23 @@ def create_pass():
 
         return redirect(url_for('dashboard'))
 
-    product = Product.query.filter_by(is_used=False).first()
+    timeout = datetime.utcnow() - RESERVE_TIMEOUT
+
+    product = Product.query.filter_by(is_used=False, reserved_by_user_id=None).with_for_update().first()
     if not product:
+        product = Product.query.filter(
+            Product.is_used == False,
+            Product.reserved_by_user_id != None,
+            Product.reserved_at < timeout
+        ).with_for_update().first()
+
+    if not product:
+        db.session.rollback()
         flash('К сожалению, товары закончились. Приходите позже!', 'warning')
         return redirect(url_for('dashboard'))
 
-    product.used_by_user_id = current_user.id
+    product.reserved_by_user_id = current_user.id
+    product.reserved_at = datetime.utcnow()
     db.session.commit()
 
     return render_template('create_pass.html', product=product)
@@ -405,13 +436,14 @@ def create_skin():
     if request.method == 'POST':
         product_id = request.form.get('product_id', type=int)
         product = Product.query.get(product_id)
-        if not product or product.skin_done:
-            flash('Ошибка: аккаунт не найден или скин уже сделан.', 'danger')
+        if not product or product.skin_done or product.skin_reserved_by_user_id != current_user.id:
+            flash('Ошибка: аккаунт не найден, скин уже сделан или занят другим пользователем.', 'danger')
             return redirect(url_for('dashboard'))
 
         product.skin_done = True
         product.skin_done_at = datetime.utcnow()
         product.skin_done_by_user_id = current_user.id
+        product.skin_reserved_by_user_id = None
 
         user = User.query.get(current_user.id)
         user.balance += SKIN_REWARD
@@ -420,16 +452,34 @@ def create_skin():
         flash(f'Скин создан! На ваш баланс начислено {SKIN_REWARD} рублей.', 'success')
         return redirect(url_for('dashboard'))
 
+    timeout = datetime.utcnow() - RESERVE_TIMEOUT
+
     product = Product.query.filter(
         Product.is_used == True,
         Product.skin_done == False,
         Product.rbxcrate_completed_at != None,
-        Product.rbxcrate_completed_at <= datetime.utcnow() - timedelta(days=5)
-    ).first()
+        Product.rbxcrate_completed_at <= datetime.utcnow() - timedelta(days=5),
+        Product.skin_reserved_by_user_id == None
+    ).with_for_update().first()
 
     if not product:
+        product = Product.query.filter(
+            Product.is_used == True,
+            Product.skin_done == False,
+            Product.rbxcrate_completed_at != None,
+            Product.rbxcrate_completed_at <= datetime.utcnow() - timedelta(days=5),
+            Product.skin_reserved_by_user_id != None,
+            Product.skin_reserved_at < timeout
+        ).with_for_update().first()
+
+    if not product:
+        db.session.rollback()
         flash('Сейчас нет доступных аккаунтов для создания скина.', 'warning')
         return redirect(url_for('dashboard'))
+
+    product.skin_reserved_by_user_id = current_user.id
+    product.skin_reserved_at = datetime.utcnow()
+    db.session.commit()
 
     return render_template('create_skin.html', product=product, links=SKIN_LINKS)
 
