@@ -80,6 +80,7 @@ class Order(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    product = db.relationship('Product', backref='orders', lazy=True)
     roblox_username = db.Column(db.String(80), nullable=False)
     place_id = db.Column(db.String(20), nullable=False)
     rbxcrate_order_id = db.Column(db.String(100), nullable=True)
